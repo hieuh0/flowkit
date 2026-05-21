@@ -1,0 +1,35 @@
+networks:
+  flowkit-net:
+    name: flowkit-net  # fixed name so callers can reference it without the project prefix
+
+services:
+  proxy-video:
+    build: .
+    container_name: proxy-video
+    ports:
+      - "8100:8100"    # API — host: http://127.0.0.1:8100
+      - "9222:9222"  # WebSocket — extension: ws://127.0.0.1:9222
+    networks:
+      - flowkit-net
+    environment:
+      API_HOST: "0.0.0.0"
+      WS_HOST: "0.0.0.0"
+      API_PORT: "8100"
+      WS_PORT: "9222"
+      # Optional overrides (uncomment to use):
+      # ANTHROPIC_API_KEY: ""
+      # SUNO_API_KEY: ""
+      # GOOGLE_API_KEY: ""
+      # POLL_INTERVAL: "5"
+      # MAX_CONCURRENT_REQUESTS: "5"
+    volumes:
+      - ./output:/app/output          # generated videos/images
+      - ./youtube:/app/youtube        # channel configs
+      - ./flow_agent.db:/app/flow_agent.db  # SQLite database
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
