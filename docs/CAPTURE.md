@@ -16,6 +16,7 @@ request bodies to disk, so it goes in for one session and comes straight back ou
 |---|---|---|
 | generate image | `ogiZ0b` | signed CDN url comes back inline |
 | generate video | `eb1hJf` | returns an operation id |
+| generate text-to-video | `YhhmEf` | Omni text-to-video, no source media; 4/6/8/10s |
 | poll operation | `jwpduf` | status `CAE` means finished |
 | operation → media id | `Zzl0ze` | `projects/<id>`; the listing is ~17 MB |
 | media id → urls | `as29s` | signed `/video/` + poster `/image/` |

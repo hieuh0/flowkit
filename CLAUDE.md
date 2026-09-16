@@ -31,7 +31,8 @@ that change how you work:
 - **Projects are not created by Flow Kit any more.** Make one in the Flow UI and
   pin its uuid as `FLOW_PROJECT_ID`, or pass `flow_project_id` to `POST /api/projects`.
 - **Veo r2v remains unported. Omni Flash is enabled for the captured 8s/16:9
-  first-frame, first+last, and reference surfaces.** Other Omni durations remain
+  first-frame, first+last, and reference surfaces, plus text-to-video (4/6/8/10s)
+  via `POST /api/flow/generate-video-omni-text`.** Other Omni durations remain
   explicitly rejected rather than guessed.
 - **Start+end-frame chaining is supported** through the captured `nprQif` interpolation RPC;
   `FLOW_ALLOW_DEGRADED` is not needed for chaining.

@@ -247,8 +247,9 @@ You can also pass `flow_project_id` per project on `POST /api/projects`.
 ### New API capability status
 
 The current batchexecute transport supports video generation, start+end-frame chaining,
-1080p/4K upscale, and the captured Omni Flash 8s/16:9 surfaces. Veo r2v remains
-unported. Omni durations without captured model payloads remain explicitly rejected:
+1080p/4K upscale, and the captured Omni Flash 8s/16:9 surfaces (first-frame, first+last,
+and reference/Ingredients modes) and text-to-video. Veo r2v remains unported. Omni
+durations without captured model payloads remain explicitly rejected:
 
 | Capability | Status | Workaround |
 |---|---|---|
@@ -256,6 +257,7 @@ unported. Omni durations without captured model payloads remain explicitly rejec
 | Reference-to-video (r2v) | unported | `FLOW_ALLOW_DEGRADED=1` → i2v off the first reference |
 | Start+end-frame chaining (`/fk-gen-chain-videos`) | supported | uses `nprQif` interpolation RPC |
 | Omni Flash 8s/16:9 (`model_family=omni_flash`) | supported | other durations are rejected until captured |
+| Omni Flash text-to-video | supported | `POST /api/flow/generate-video-omni-text` (4/6/8/10s) |
 
 The Omni adapter uses the captured response media/workflow record and the existing
 authenticated project-media poller; it does not send Omni operation-looking handles
@@ -714,34 +716,18 @@ Optional narrator voice for scenes. Uses [OmniVoice](https://github.com/tuannguy
 
 ### Setup
 
-See `skills/fk-gen-tts-template.md` for the full install guide. The launcher uses the FlowKit venv
-at `$HOME/.venvs/flowkit`; install OmniVoice there:
+See `skills/fk-gen-tts-template.md` for full install guide. Quick version:
 
 ```bash
-$HOME/.venvs/flowkit/bin/python -m pip install torch==2.8.0 torchaudio==2.8.0
-$HOME/.venvs/flowkit/bin/python -m pip install omnivoice
-$HOME/.venvs/flowkit/bin/python -c 'from omnivoice import OmniVoice; print("OmniVoice OK")'
+pip install torch==2.8.0 torchaudio==2.8.0   # or +cu128 for NVIDIA
+pip install omnivoice
+python3 -c "from omnivoice import OmniVoice; print('OK')"
 ```
 
-The local subprocess defaults to the interpreter that launched FlowKit, so `TTS_PYTHON_BIN` is
-optional. Set it only when OmniVoice intentionally lives in a separate venv.
-
-### Optional remote OmniVoice API
-
-`agent/omnivoice_api.py` is a standalone warm FastAPI service. It loads the model once and exposes
-`POST /v1/tts` as multipart form data (`text`, `speed`, optional `instruct`, `ref_text`, and WAV
-file `ref_audio`), returning raw `audio/wav` bytes. Run it from the FlowKit checkout:
-
+If OmniVoice is in a separate venv, point to it:
 ```bash
-$HOME/.venvs/flowkit/bin/python -m pip install python-multipart
-./flowkit/run-omnivoice-api.sh
+export TTS_PYTHON_BIN=/path/to/omnivoice-venv/bin/python3
 ```
-
-The main FlowKit API can call it by setting `TTS_BACKEND=remote` and `TTS_REMOTE_URL=http://127.0.0.1:8200`.
-The remote backend reads each local `ref_audio` WAV, uploads its bytes, validates the returned WAV,
-and writes it atomically to the existing local output path. For a non-loopback deployment, set
-`OMNIVOICE_API_TOKEN` on the inference service and the matching `TTS_REMOTE_TOKEN` on FlowKit,
-use HTTPS, and do not expose the service publicly without authentication.
 
 ### Workflow
 
@@ -750,8 +736,7 @@ use HTTPS, and do not expose the service publicly without authentication.
 3. **Generate narration** — `/fk-gen-narrator` — voice-clones the template for each scene
 4. **Concat with narration** — `/fk-concat-fit-narrator` — trims scene videos to match TTS duration
 
-CPU-only is recommended for the local backend (MPS produces artifacts). Remote mode is serialized
-per scene and keeps the model warm in the standalone inference service.
+CPU-only recommended (MPS produces artifacts). ~15-30s per scene.
 
 ## YouTube Upload Pipeline
 
@@ -809,7 +794,7 @@ These arrive in the response body as `data.error.details[].reason`. The worker a
 | `Requested entity was not found` | Uploaded `media_id` expired (~1h TTL) | Auto-recover via `_recover_entity_not_found` — re-uploads from `image_url`, re-queues PENDING |
 | `Internal error encountered` | Flow backend transient 500 | Exponential backoff retry: `2^retry * 10s`, capped 300s |
 | `reCAPTCHA failed` / `captcha` | Extension couldn't solve CAPTCHA | Retry up to 10× without incrementing `retry_count` (processor.py:454-464) |
-| `PUBLIC_ERROR_UNUSUAL_ACTIVITY` (403, message `reCAPTCHA evaluation failed`) | Google flagged the session as bot-like — usually rapid bursts of submits, VPN/shared IP, or stale auth cookies | NOT auto-recoverable. Pause submits, clear cookies for `google.com` + `labs.google` in Chrome, sign back in at `labs.google/fx/tools/flow`, then resubmit with ≥1s gap and ≤5 concurrent. See `/fk-doctor` for full playbook. |
+| `PUBLIC_ERROR_UNUSUAL_ACTIVITY` (403, message `reCAPTCHA evaluation failed`) | Google flagged the session as bot-like — usually rapid bursts of submits, VPN/shared IP, or stale auth cookies | NOT auto-recoverable. Pause submits, clear cookies for `google.com` + `labs.google` in Chrome, sign back in at `flow.google.com`, then resubmit with ≥1s gap and ≤5 concurrent. See `/fk-doctor` for full playbook. |
 
 ### HTTP Status Codes
 

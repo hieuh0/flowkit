@@ -165,7 +165,21 @@ class TestVideoRequest:
         assert fb.resolve_interpolation_model(
             "veo_3_1_i2v_s_fast_portrait_fl") == fb.INTERPOLATION_MODEL
 
-
+    def test_text_video_matches_the_captured_yhhmef_shape(self):
+        payload = inner(fb.text_video_request(
+            "a boat", self.PID,
+            aspect="VIDEO_ASPECT_RATIO_LANDSCAPE",
+            model="abra_t2v_4s",
+        ))
+        request = payload[0][0]
+        assert request[0] == [None, None, [[["a boat"]]]]
+        assert request[1] == "abra_t2v_4s"
+        assert request[2] == fb.VIDEO_ASPECT_LANDSCAPE
+        assert request[3] is None
+        assert len(request[4]) == 6
+        assert payload[1][5] == self.PID
+        assert payload[2][1] == 1
+        assert fb.CAPTCHA_SLOT in json.dumps(payload)
 
 
 class TestOmniVideoRequests:
@@ -183,6 +197,7 @@ class TestOmniVideoRequests:
         assert item[1] == [[None, "ref-1"], [None, "ref-2"]]
         assert item[2] == "abra_r2v_8s"
         assert item[3] == fb.VIDEO_ASPECT_LANDSCAPE
+
 
 class TestReaders:
     OP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -207,6 +222,15 @@ class TestReaders:
     def test_a_repeated_url_is_not_a_second_variant(self):
         url = f"https://{fb.MEDIA_HOST}/image/{self.MID}?sig=x"
         assert len(fb.read_images([url, url])) == 1
+
+    def test_text_video_submit_reads_media_and_workflow_ids(self):
+        payload = [None, 10, [], [[self.MID, "project-1", self.OP, "CAE"]]]
+        assert fb.read_text_video_submit(payload) == {
+            "media_id": self.MID,
+            "project_id": "project-1",
+            "workflow_id": self.OP,
+            "status": "CAE",
+        }
 
     def test_operation_reads_the_id_and_status(self):
         op = fb.read_operation([None, 50, [[self.OP, "proj", "scene", "CAE"]]])
@@ -304,26 +328,3 @@ class TestResolvers:
                     from agent.config import VIDEO_MODELS
                     key = VIDEO_MODELS.get(tier, {}).get(gen, {}).get(aspect)
                     assert fb.resolve_video_model(key) in fb.VIDEO_MODELS
-
-
-class TestProjectRpcs:
-    def test_create_request_carries_the_captured_slots(self):
-        assert inner(fb.create_project_request("My Film")) == [
-            "projects/*", [None, ["My Film"]], [None, fb.SURFACE_ID]]
-
-    def test_delete_request_names_the_project_path(self):
-        assert inner(fb.delete_project_request("11111111-2222-3333-4444-555555555555")) == [
-            "projects/11111111-2222-3333-4444-555555555555"]
-
-    def test_read_created_id_takes_the_leading_uuid(self):
-        pid = "8e30afb8-92d0-4d0b-b652-f0a79faca9f5"
-        assert fb.read_created_project_id([pid, ["My Film"]]) == pid
-
-    def test_read_created_id_rejects_a_trailing_newline(self):
-        r"""`$` would let "<uuid>\n" through; fullmatch must reject it."""
-        with pytest.raises(fb.FlowBatchError):
-            fb.read_created_project_id(["8e30afb8-92d0-4d0b-b652-f0a79faca9f5\n", ["x"]])
-
-    def test_read_created_id_rejects_a_non_uuid_lead(self):
-        with pytest.raises(fb.FlowBatchError):
-            fb.read_created_project_id([["My Film"], "not-a-uuid"])
