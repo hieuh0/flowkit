@@ -506,29 +506,31 @@ class FlowClient:
     async def batch_rpc(self, rpcid: str, freq: str,
                         captcha_action: str | None = None,
                         match: str | None = None,
-                        timeout: float = 300) -> dict:
-        """Run one batchexecute RPC in the Flow page. Returns the raw body.
-
-        ``match`` asks the extension to cut the response down to an 800-byte
-        window around that string before handing it back. The project listing
-        is tens of megabytes for the one entry we want, and the cheapest place
-        to throw the rest away is inside the tab.
-        """
+                        timeout: float = 300,
+                        source_path: str | None = None) -> dict:
+        """Run one batchexecute RPC in the Flow page. Returns the raw body."""
         params: dict = {"rpcid": rpcid, "freq": freq}
         if captcha_action:
             params["captchaAction"] = captcha_action
         if match:
             params["match"] = match
+        if source_path:
+            params["sourcePath"] = source_path
         return await self._send("batch_rpc", params, timeout=timeout)
 
     async def _batch_payload(self, rpcid: str, freq: str,
                              captcha_action: str | None = None,
-                             timeout: float = 300):
+                             timeout: float = 300,
+                             source_path: str | None = None):
         """One RPC, unwrapped to its inner payload. Raises on anything else."""
-        result = await self.batch_rpc(rpcid, freq, captcha_action, timeout=timeout)
+        result = await self.batch_rpc(
+            rpcid, freq, captcha_action, timeout=timeout,
+            source_path=source_path)
         if result.get("error"):
             raise fb.FlowBatchError(f"{rpcid}: {result['error']}")
         return fb.first_payload(result.get("data") or "", rpcid)
+
+
 
     def _batch_project_id(self, project_id: str) -> str:
         """The Flow project an RPC is scoped to.
@@ -599,6 +601,71 @@ class FlowClient:
             return {"error": _UNSUPPORTED_CREATE_PROJECT}
         logger.info("Reusing pinned Flow project %s for '%s'", pid[:12], project_title)
         return {"status": 200, "data": {"projectId": pid}}
+
+    async def create_native_character(self, project_id: str,
+                                      name: str = "Untitled character") -> dict:
+        """Create a native Character in an existing Flow project."""
+        if not USE_BATCH_RPC:
+            return {"status": 400, "error": "Native Character requires batch RPC"}
+        try:
+            pid = self._batch_project_id(project_id)
+            payload = await self._batch_payload(
+                "C4BZMd",
+                fb.native_character_create_request(pid, name),
+                timeout=120,
+            )
+            ids = fb.read_native_character_created(payload)
+        except Exception as e:
+            return _batch_error(e)
+        return {"status": 200, "data": ids}
+    async def generate_native_character_prompt(
+        self, project_id: str, character_id: str, prompt: str,
+        model: str = "NARWHAL", seed: int = 1,
+    ) -> dict:
+        """Generate and bind a native Character portrait via ``ogiZ0b``."""
+        if not USE_BATCH_RPC:
+            return {"status": 400, "error": "Native Character requires batch RPC"}
+        try:
+            pid = self._batch_project_id(project_id)
+            payload = await self._batch_payload(
+                fb.RPC_GEN_IMAGE,
+                fb.native_character_prompt_request(
+                    prompt, pid, character_id, model, seed),
+                fb.CAPTCHA_IMAGE,
+                timeout=120,
+                source_path=f"/project/{pid}/character/{character_id}",
+            )
+            binding = fb.read_native_character_prompt_binding(payload)
+        except Exception as e:
+            return _batch_error(e)
+        return {"status": 200, "data": {
+            "project_id": binding.project_id,
+            "character_id": binding.character_id,
+            "media_id": binding.media_id,
+            "workflow_id": binding.workflow_id,
+        }}
+
+    async def attach_native_catalog_voice(self, project_id: str,
+                                          character_id: str,
+                                          voice_id: str) -> dict:
+        """Attach a catalog voice to a native Character."""
+        if not USE_BATCH_RPC:
+            return {"status": 400, "error": "Native Character requires batch RPC"}
+        try:
+            pid = self._batch_project_id(project_id)
+            payload = await self._batch_payload(
+                fb.RPC_UPDATE_CHARACTER,
+                fb.native_catalog_voice_request(pid, character_id, voice_id),
+                timeout=120,
+                source_path=f"/project/{pid}/character/{character_id}",
+            )
+        except Exception as e:
+            return _batch_error(e)
+        return {"status": 200, "data": payload}
+
+
+
+
 
     async def generate_images(self, prompt: str, project_id: str,
                                aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
@@ -961,6 +1028,33 @@ class FlowClient:
         except Exception as e:
             return _batch_error(e)
         return {"status": 200, "data": {"media": {"name": media_id}}, "_mediaId": media_id}
+
+    async def bind_native_portrait(self, image_base64: str,
+                                   character_id: str,
+                                   mime_type: str = "image/jpeg",
+                                   project_id: str = "",
+                                   file_name: str = "image.jpg") -> dict:
+        """Bind an uploaded portrait to a native Character."""
+        if not USE_BATCH_RPC:
+            return {"status": 400, "error": "Native Character requires batch RPC"}
+        try:
+            pid = self._batch_project_id(project_id)
+            payload = await self._batch_payload(
+                fb.RPC_UPLOAD_IMAGE,
+                fb.native_portrait_request(
+                    image_base64, pid, character_id, mime_type, file_name),
+                fb.CAPTCHA_IMAGE, timeout=120,
+            )
+            binding = fb.read_native_portrait_binding(payload)
+        except Exception as e:
+            return _batch_error(e)
+        return {"status": 200, "data": {
+            "media_id": binding.media_id,
+            "project_id": binding.project_id,
+            "workflow_id": binding.workflow_id,
+            "character_id": binding.character_id,
+            "status": binding.status,
+        }}
 
     # ─── Legacy REST methods (aisandbox-pa, pre-migration) ───
 

@@ -51,9 +51,11 @@ def client(monkeypatch):
     c.responses = {}
     c.calls = []
 
-    async def fake_batch_rpc(rpcid, freq, captcha_action=None, match=None, timeout=300):
+    async def fake_batch_rpc(rpcid, freq, captcha_action=None, match=None,
+                             timeout=300, source_path=None):
         c.calls.append({"rpcid": rpcid, "freq": freq,
-                        "captcha": captcha_action, "match": match})
+                        "captcha": captcha_action, "match": match,
+                        "source_path": source_path})
         canned = c.responses.get(rpcid, {"data": ""})
         return canned(match) if callable(canned) else canned
 
@@ -108,6 +110,8 @@ class TestGenerateImages:
 
 class TestEditImage:
     async def test_the_source_leads_the_reference_list(self, client):
+
+
         client.responses[fb.RPC_GEN_IMAGE] = {"data": envelope(fb.RPC_GEN_IMAGE, [[IMAGE_URL]])}
         await client.edit_image("redraw", "src-1", PROJECT, character_media_ids=["ref-a"])
 
@@ -121,6 +125,39 @@ class TestEditImage:
         item = json.loads(json.loads(client.calls[0]["freq"])[0][0][1])[1][0]
         assert [ref[0] for ref in item[2]] == ["src-1", "ref-a"]
 
+
+
+
+
+class TestNativeCharacterPrompt:
+    async def test_normalizes_captured_binding_and_keeps_character_slot(self, client):
+        character_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        payload = [[[
+            "media-id", None, "workflow-id", None, None, None
+        ]], [[
+            "workflow-id", None, None, None, PROJECT, character_id
+        ]]]
+        client.responses[fb.RPC_GEN_IMAGE] = {
+            "data": envelope(fb.RPC_GEN_IMAGE, payload)
+        }
+        result = await client.generate_native_character_prompt(
+            PROJECT, character_id, "mechanic", seed=7)
+        assert result == {
+            "status": 200,
+            "data": {
+                "project_id": PROJECT,
+                "character_id": character_id,
+                "media_id": "media-id",
+                "workflow_id": "workflow-id",
+            },
+        }
+        inner_payload = json.loads(json.loads(
+            client.calls[0]["freq"])[0][0][1])
+        assert inner_payload[4][2] == [character_id, [0]]
+        assert client.calls[0]["captcha"] == fb.CAPTCHA_IMAGE
+        assert client.calls[0]["source_path"] == (
+            f"/project/{PROJECT}/character/{character_id}"
+        )
 
 
 class TestGenerateVideo:

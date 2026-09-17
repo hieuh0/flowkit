@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 
 
 from agent.models.enums import EntityType
@@ -13,6 +13,45 @@ class CharacterCreate(BaseModel):
     voice_description: Optional[str] = None  # max ~30 words
     reference_image_url: Optional[str] = None
     media_id: Optional[str] = None
+
+
+
+class NativeCharacterCreate(BaseModel):
+    project_id: str
+    name: str = "Untitled character"
+
+
+class NativeCharacter(BaseModel):
+    project_id: str
+    character_id: str
+
+
+class NativeCharacterPromptCreate(BaseModel):
+    project_id: str
+    character_id: str
+    prompt: str
+    model: Literal["NARWHAL"] = "NARWHAL"
+    seed: int = 1
+
+
+class NativeCharacterPrompt(BaseModel):
+    project_id: str
+    character_id: str
+    media_id: str
+    workflow_id: str
+
+
+class NativeCharacterVoiceAttach(BaseModel):
+    project_id: str
+    character_id: str
+    voice_id: str
+
+
+
+
+
+
+
 
 
 class CharacterUpdate(BaseModel):

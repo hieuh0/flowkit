@@ -199,6 +199,87 @@ class TestOmniVideoRequests:
         assert item[3] == fb.VIDEO_ASPECT_LANDSCAPE
 
 
+
+
+    def test_native_character_prompt_matches_ogi_capture(self):
+        character_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        payload = inner(fb.native_character_prompt_request(
+            "mechanic", self.PID, character_id, seed=7))
+        item = payload[1][0]
+        assert item[3:6] == [7, fb.ASPECT_LANDSCAPE, "NARWHAL"]
+        assert item[8] == [[["mechanic"]]]
+        assert payload[2] == 1
+        assert payload[3][5] == self.PID
+        assert payload[4][2] == [character_id, [0]]
+class TestNativePortraitRequest:
+    PID = "11111111-2222-3333-4444-555555555555"
+    CID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    def test_maseq_keeps_project_and_character_slots_distinct(self):
+        payload = inner(fb.native_portrait_request(
+            "aGVsbG8=", self.PID, self.CID, "image/png", "portrait.png"))
+        assert payload[0][5] == self.PID
+        assert payload[0][10] == [fb.CAPTCHA_SLOT, 1]
+        assert payload[1] == "aGVsbG8="
+        assert payload[2] == "image/png"
+        assert payload[8] == "portrait.png"
+        assert payload[9] == [None, None, [self.CID, [0]]]
+        assert payload[10] != payload[11]
+
+    def test_native_character_create_keeps_project_and_name_shape(self):
+        payload = inner(fb.native_character_create_request(self.PID, "Luna"))
+        assert payload == [[self.PID, None, None, [1, "Luna", []]]]
+
+    def test_native_character_create_reader_separates_ids(self):
+        assert fb.read_native_character_created([self.PID, self.CID]) == {
+            "project_id": self.PID,
+            "character_id": self.CID,
+        }
+
+    def test_native_character_create_reader_handles_record_wrapper(self):
+        assert fb.read_native_character_created(
+            [["project-id", "character-id", None]]
+        ) == {
+            "project_id": "project-id",
+            "character_id": "character-id",
+        }
+
+    def test_native_catalog_voice_matches_ui_update_shape(self):
+        payload = inner(fb.native_catalog_voice_request(
+            self.PID, self.CID, "achird"))
+        assert payload == [
+            [
+                self.PID,
+                self.CID,
+                None,
+                [1, None, [None, [[None, "achird"]]]],
+            ],
+            [["entity_info.character_info.audio_references"]],
+        ]
+
+    def test_native_character_prompt_reader_separates_ids(self):
+        payload = [[[
+            "media-id", None, "workflow-id", None, None, None
+        ]], [[
+            "workflow-id", None, None, None, "project-id", "character-id"
+        ]]]
+        binding = fb.read_native_character_prompt_binding(payload)
+        assert (binding.media_id, binding.workflow_id, binding.project_id,
+                binding.character_id) == (
+            "media-id", "workflow-id", "project-id", "character-id")
+
+    def test_native_portrait_reader_separates_verified_response_ids(self):
+        payload = [
+            ["media-id", "project-id", "workflow-id", "CAE"],
+            ["workflow-id", None, None, ["ui.png", None, None, None, "media-id"],
+             "project-id", "character-id"],
+        ]
+        binding = fb.read_native_portrait_binding(payload)
+        assert (binding.media_id, binding.project_id, binding.workflow_id,
+                binding.character_id, binding.status) == (
+            "media-id", "project-id", "workflow-id", "character-id", "CAE"
+        )
+
 class TestReaders:
     OP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     MID = "12345678-1234-1234-1234-1234567890ab"

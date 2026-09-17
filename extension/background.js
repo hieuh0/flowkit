@@ -464,16 +464,30 @@ const MAX_RPC_TEXT = 32000000; // the project listing alone is past 17 MB
 
 async function runBatchRpc(cmd) {
   const tabs = await chrome.tabs.query({ url: flowUrls });
-  let candidate = tabs.find((t) => !t.discarded) || tabs[0];
+  const wantedPath = cmd.sourcePath || '';
+  let candidate = wantedPath
+    ? tabs.find((t) => !t.discarded && new URL(t.url || '').pathname === wantedPath)
+    : tabs.find((t) => !t.discarded) || tabs[0];
   if (!candidate) {
-    // No Flow tab — open one and give the app a moment to boot, otherwise
-    // WIZ_global_data is not on the page yet and `at` comes back empty. Keep
-    // the exact created tab id so redirects/stale tabs cannot hijack recovery.
     let opened;
     try {
-      opened = await chrome.tabs.create({ url: FLOW_TAB_URL, active: false });
+      const editorUrl = wantedPath
+        ? new URL(wantedPath, FLOW_TAB_URL).href
+        : FLOW_TAB_URL;
+      opened = await chrome.tabs.create({
+        url: editorUrl,
+        active: false,
+      });
       await sleep(5000);
-      candidate = opened?.id ? await chrome.tabs.get(opened.id).catch(() => null) : null;
+      candidate = opened?.id
+        ? await chrome.tabs.get(opened.id).catch(() => null)
+        : null;
+      if (wantedPath && candidate) {
+        const finalPath = new URL(candidate.url || '').pathname;
+        if (finalPath !== wantedPath) {
+          return { error: `FLOW_TAB_PATH_MISMATCH: expected ${wantedPath}, got ${finalPath}` };
+        }
+      }
     } catch (e) {
       return { error: e?.message || 'NO_FLOW_TAB' };
     }
@@ -482,6 +496,22 @@ async function runBatchRpc(cmd) {
   // Chrome discards backgrounded tabs; executeScript throws on a dead one.
   const tab = await reviveTabIfNeeded(candidate);
   if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
+  if (wantedPath) {
+    let ready = false;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: 'MAIN',
+        func: () => Boolean(globalThis.WIZ_global_data),
+      }).catch(() => []);
+      if (result?.result) {
+        ready = true;
+        break;
+      }
+      await sleep(1000);
+    }
+    if (!ready) return { error: 'FLOW_TAB_NOT_READY' };
+  }
 
   let freq = cmd.freq;
   if (cmd.captchaAction) {
@@ -493,8 +523,8 @@ async function runBatchRpc(cmd) {
   const [injected] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     world: 'MAIN',
-    args: [cmd.rpcid, freq, MAX_RPC_TEXT, cmd.match || null],
-    func: async (rpcid, freqStr, maxText, match) => {
+    args: [cmd.rpcid, freq, MAX_RPC_TEXT, cmd.match || null, cmd.sourcePath || null],
+    func: async (rpcid, freqStr, maxText, match, sourcePath) => {
       const wiz = globalThis.WIZ_global_data || {};
       const at = wiz.SNlM0e;
       const sid = wiz.FdrFJe;
@@ -503,8 +533,9 @@ async function runBatchRpc(cmd) {
       const reqid = Math.floor(Math.random() * 900000) + 100000;
       const url =
         `/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=${encodeURIComponent(rpcid)}` +
+        (sourcePath ? `&source-path=${encodeURIComponent(sourcePath)}` : '') +
         `&f.sid=${encodeURIComponent(sid || '')}&bl=${encodeURIComponent(bl || '')}` +
-        `&hl=en-AU&_reqid=${reqid}&rt=c`;
+        `&hl=en-US&_reqid=${reqid}&rt=c`;
       const resp = await fetch(url, {
         method: 'POST',
         credentials: 'include',
@@ -512,7 +543,7 @@ async function runBatchRpc(cmd) {
           'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
           'x-same-domain': '1',
         },
-        body: new URLSearchParams({ 'f.req': freqStr, at }),
+        body: `${new URLSearchParams({ 'f.req': freqStr, at })}&`,
       });
       const text = await resp.text();
       // The project listing is tens of megabytes and all we ever want from it
@@ -535,7 +566,7 @@ async function runBatchRpc(cmd) {
 
 async function handleBatchRpc(msg) {
   const { id, params } = msg;
-  const { rpcid, freq, captchaAction, match } = params || {};
+  const { rpcid, freq, captchaAction, match, sourcePath } = params || {};
   if (!rpcid || !freq) {
     sendToAgent({ id, status: 400, error: 'INVALID_BATCH_RPC' });
     return;
@@ -556,7 +587,9 @@ async function handleBatchRpc(msg) {
   }
 
   try {
-    const out = await runBatchRpc({ id, rpcid, freq, captchaAction, match });
+    const out = await runBatchRpc({
+      id, rpcid, freq, captchaAction, match, sourcePath,
+    });
     if (out.error) {
       if (hasCaptcha) { metrics.failedCount++; metrics.lastError = out.error; }
       if (visible) updateRequestLog(id, { status: 'failed', error: out.error });

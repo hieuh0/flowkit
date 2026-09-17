@@ -82,6 +82,13 @@ class UploadImageRequest(BaseModel):
     file_name: str = "image.png"
 
 
+
+class NativePortraitRequest(BaseModel):
+    file_path: str
+    project_id: str
+    character_id: str
+    file_name: str = "image.png"
+
 class CheckStatusRequest(BaseModel):
     operations: list[dict] = []
     # Omni/workflow-mode callers should pass workflow descriptors instead of
@@ -401,3 +408,36 @@ async def upload_image(body: UploadImageRequest):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
     media_id = result.get("_mediaId")
     return {"media_id": media_id, "raw": result.get("data", result)}
+
+
+@router.post("/native-character-portrait")
+async def native_character_portrait(body: NativePortraitRequest):
+    """Bind a portrait file to a native Character through ``maseQ``."""
+    import base64, mimetypes
+    from uuid import UUID
+
+    try:
+        project_id = str(UUID(body.project_id))
+        character_id = str(UUID(body.character_id))
+    except ValueError as exc:
+        raise HTTPException(422, "project_id and character_id must be UUIDs") from exc
+
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    try:
+        with open(body.file_path, "rb") as f:
+            image_bytes = f.read()
+    except FileNotFoundError:
+        raise HTTPException(404, f"File not found: {body.file_path}")
+    mime = mimetypes.guess_type(body.file_path)[0] or "image/png"
+    result = await client.bind_native_portrait(
+        base64.b64encode(image_bytes).decode(),
+        character_id=character_id,
+        mime_type=mime,
+        project_id=project_id,
+        file_name=body.file_name,
+    )
+    if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
+        raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
+    return result.get("data", result)

@@ -41,6 +41,7 @@ RPC_OPERATION = "jwpduf"
 RPC_PROJECT_MEDIA = "Zzl0ze"
 RPC_MEDIA = "as29s"
 RPC_UPLOAD_IMAGE = "maseQ"
+RPC_UPDATE_CHARACTER = "rzMKMb"
 RPC_CREATE_PROJECT = "jHPbke"
 RPC_DELETE_PROJECT = "QI2zvc"
 RPC_UPSCALE = "p0UkFb"
@@ -237,6 +238,23 @@ class MediaRecord:
     status: Optional[str] = None
 
 
+
+@dataclass(frozen=True)
+class NativePortraitBinding:
+    media_id: str
+    project_id: str
+    workflow_id: str
+    character_id: str
+    status: Optional[str]
+
+
+@dataclass(frozen=True)
+class NativeCharacterPromptBinding:
+    media_id: str
+    workflow_id: str
+    project_id: str
+    character_id: str
+
 # ── model / aspect resolvers ─────────────────────────────────────────────────
 
 def resolve_image_model(key: Optional[str]) -> str:
@@ -409,6 +427,50 @@ def image_request(prompt: str, project_id: str, count: int = 1,
                                           [_client_uuid()]])
 
 
+def native_character_prompt_request(prompt: str, project_id: str,
+                                    character_id: str,
+                                    model: str = "NARWHAL",
+                                    seed: int = 1) -> str:
+    """Generate and bind a native Character portrait via ``ogiZ0b``."""
+    item = [
+        None, None, None, seed, ASPECT_LANDSCAPE, model, None,
+        _context(project_id), [[[prompt]]], None, None, None,
+        _client_uuid(), _client_uuid(),
+    ]
+    return build_envelope("ogiZ0b", [
+        None, [item], 1, _context(project_id),
+        [_client_uuid(), None, [character_id, [0]]],
+    ])
+
+
+def read_native_character_prompt_binding(payload: Any) -> NativeCharacterPromptBinding:
+    """Read the media/workflow/project/Character IDs returned by ``ogiZ0b``."""
+    if not isinstance(payload, list) or len(payload) < 2:
+        raise FlowBatchError("native Character prompt response carried no records")
+    media_group, detail_group = payload[0], payload[1]
+    if not isinstance(media_group, list) or not media_group:
+        raise FlowBatchError("native Character prompt response carried no media")
+    if not isinstance(detail_group, list) or not detail_group:
+        raise FlowBatchError("native Character prompt response carried no Character")
+    media_record, detail = media_group[0], detail_group[0]
+    if not isinstance(media_record, list) or len(media_record) < 3:
+        raise FlowBatchError("native Character prompt response carried no media")
+    if not isinstance(detail, list) or len(detail) < 6:
+        raise FlowBatchError("native Character prompt response carried no Character")
+    media_id, workflow_id = media_record[0], media_record[2]
+    detail_workflow, project_id, character_id = detail[0], detail[4], detail[5]
+    if not all(isinstance(v, str) and v for v in (
+        media_id, workflow_id, detail_workflow, project_id, character_id
+    )):
+        raise FlowBatchError("native Character prompt response carried invalid identifiers")
+    if detail_workflow != workflow_id:
+        raise FlowBatchError("native Character prompt response workflow mismatch")
+    return NativeCharacterPromptBinding(
+        media_id=media_id,
+        workflow_id=workflow_id,
+        project_id=project_id,
+        character_id=character_id,
+    )
 def video_request(prompt: str, project_id: str, source_media_id: str,
                   crop: Optional[list] = None,
                   aspect: Any = VIDEO_ASPECT_LANDSCAPE,
@@ -478,6 +540,75 @@ def upload_request(image_b64: str, project_id: str, mime_type: str = "image/jpeg
     ])
 
 
+def native_character_create_request(project_id: str,
+                                     name: str = "Untitled character") -> str:
+    """Create a native Character via ``C4BZMd``."""
+    return build_envelope("C4BZMd", [
+        [project_id, None, None, [1, name, []]],
+    ])
+
+
+def read_native_character_created(payload: Any) -> dict[str, str]:
+    """Read project and Character UUIDs from the C4BZMd response."""
+    record = payload[0] if (
+        isinstance(payload, list)
+        and len(payload) == 1
+        and isinstance(payload[0], list)
+    ) else payload
+    if not isinstance(record, list) or len(record) < 2:
+        raise FlowBatchError("native Character create returned no identifiers")
+    project_id, character_id = record[0], record[1]
+    if not isinstance(project_id, str) or not isinstance(character_id, str):
+        raise FlowBatchError("native Character create returned invalid identifiers")
+    return {"project_id": project_id, "character_id": character_id}
+
+
+def read_native_portrait_binding(payload: Any) -> NativePortraitBinding:
+    """Read the verified two-record ``maseQ`` portrait response."""
+    if not isinstance(payload, list) or len(payload) < 2:
+        raise FlowBatchError("native portrait response carried no records")
+    media_record, detail = payload[0], payload[1]
+    if not isinstance(media_record, list) or len(media_record) < 4:
+        raise FlowBatchError("native portrait response carried no media record")
+    if not isinstance(detail, list) or len(detail) < 6:
+        raise FlowBatchError("native portrait response carried no Character record")
+    media_id, project_id, workflow_id, status = media_record[:4]
+    character_id = detail[5]
+    detail_media = (
+        detail[3][4]
+        if isinstance(detail[3], list) and len(detail[3]) > 4
+        else None
+    )
+    if not all(isinstance(v, str) and v for v in (
+        media_id, project_id, workflow_id, character_id
+    )):
+        raise FlowBatchError("native portrait response carried invalid identifiers")
+    if detail[0] != workflow_id:
+        raise FlowBatchError("native portrait response workflow mismatch")
+    if detail[4] != project_id:
+        raise FlowBatchError("native portrait response project mismatch")
+    if detail_media != media_id:
+        raise FlowBatchError("native portrait response media mismatch")
+    return NativePortraitBinding(
+        media_id=media_id,
+        project_id=project_id,
+        workflow_id=workflow_id,
+        character_id=character_id,
+        status=status if isinstance(status, str) else None,
+    )
+
+def native_portrait_request(image_b64: str, project_id: str,
+                            character_id: str,
+                            mime_type: str = "image/jpeg",
+                            file_name: str = "upload.jpg") -> str:
+    """Bind a portrait image to a native Character via ``maseQ``."""
+    return build_envelope(RPC_UPLOAD_IMAGE, [
+        _context(project_id), image_b64, mime_type, 1, None, None, None, None,
+        file_name, [None, None, [character_id, [0]]],
+        _client_uuid(), _client_uuid(),
+    ])
+
+
 def interpolation_request(prompt: str, project_id: str, start_media_id: str,
                           end_media_id: str,
                           aspect: Any = VIDEO_ASPECT_LANDSCAPE,
@@ -509,6 +640,16 @@ def interpolation_request(prompt: str, project_id: str, start_media_id: str,
     ]
     inner = [[request], _context(project_id), [_client_uuid(), 2]]
     return build_envelope(RPC_GEN_VIDEO_CHAIN, inner)
+
+
+def native_catalog_voice_request(project_id: str, character_id: str,
+                                 voice_id: str) -> str:
+    """Attach a catalog voice to a native Character via ``rzMKMb``."""
+    return build_envelope(RPC_UPDATE_CHARACTER, [
+        [project_id, character_id, None,
+         [1, None, [None, [[None, voice_id]]]]],
+        [["entity_info.character_info.audio_references"]],
+    ])
 
 
 def operation_request(operation_id: str) -> str:
